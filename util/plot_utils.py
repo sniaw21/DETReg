@@ -169,11 +169,12 @@ def rescale_bboxes(out_bbox, size):
 def plot_prediction(image, boxes, logits, ax=None, plot_prob=True):
     bboxes_scaled0 = rescale_bboxes(boxes[0], list(image.shape[2:])[::-1])
     probas = logits.softmax(-1)[0, :, :-1]
-    keep = probas.max(-1).values > 0.01
+    keep = probas.max(-1).values > 0.50
     if ax is None:
         ax = plt.gca()
     plot_results(image[0].permute(1, 2, 0).detach().cpu().numpy(), probas[keep], bboxes_scaled0[keep], ax, plot_prob=plot_prob)
 
+classes = ["none", "nautilus", "azir", "ekko", "kalista", "ezreal", "sett", "camille", "karma", "graves", "ornn"]
 
 def plot_results(pil_img, prob, boxes, ax, plot_prob=True, norm=True):
     from matplotlib import pyplot as plt
@@ -183,7 +184,8 @@ def plot_results(pil_img, prob, boxes, ax, plot_prob=True, norm=True):
             ax.add_patch(plt.Rectangle((xmin, ymin), xmax - xmin, ymax - ymin,
                                        fill=False, color='r', linewidth=1))
             if plot_prob:
-                text = f'{p:0.2f}'
-                ax.text(xmin, ymin, text, fontsize=15,
-                        bbox=dict(facecolor='yellow', alpha=0.5))
+                idx = torch.argmax(p)
+                cat = classes[idx]
+                text = f'{cat}-{p[idx]:0.2f}'
+                ax.text(xmin, ymin, text, fontsize=5, color='yellow')
     ax.grid('off')

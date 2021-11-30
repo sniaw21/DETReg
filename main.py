@@ -26,7 +26,7 @@ from datasets import build_dataset, get_coco_api_from_dataset
 from datasets.coco import make_coco_transforms
 from datasets.selfdet import build_selfdet
 from datasets.torchvision_datasets.voc import VOCDetection
-from engine import evaluate, train_one_epoch, viz
+from engine import evaluate, train_one_epoch, viz, viz_only
 from models import build_model
 from models.backbone import build_swav_backbone, build_swav_backbone_old
 
@@ -135,6 +135,7 @@ def get_args_parser():
                         help='start epoch')
     parser.add_argument('--eval', action='store_true')
     parser.add_argument('--viz', action='store_true')
+    parser.add_argument('--viz_only', action='store_true')
     parser.add_argument('--num_workers', default=2, type=int)
     parser.add_argument('--cache_mode', default=False, action='store_true', help='whether to cache images on memory')
     parser.add_argument('--object_embedding_loss', default=False, action='store_true', help='whether to use this loss')
@@ -202,8 +203,8 @@ def main(args):
                 break
         return out
 
-    for n, p in model_without_ddp.named_parameters():
-        print(n)
+    # for n, p in model_without_ddp.named_parameters():
+    #     print(n)
 
     param_dicts = [
         {
@@ -237,7 +238,7 @@ def main(args):
         # We also evaluate AP during panoptic training, on original coco DS
         coco_val = datasets.coco.build("val", args)
         base_ds = get_coco_api_from_dataset(coco_val)
-    elif args.dataset_file == "coco":
+    elif args.dataset_file == "coco" or args.dataset_file == "lol":
         base_ds = get_coco_api_from_dataset(dataset_val)
     else:
         base_ds = dataset_val
@@ -265,13 +266,14 @@ def main(args):
                 args.resume, map_location='cpu', check_hash=True)
         else:
             checkpoint = torch.load(args.resume, map_location='cpu')
-        missing_keys, unexpected_keys = model_without_ddp.load_state_dict(checkpoint['model'], strict=False)
+
+        missing_keys, unexpected_keys = model_without_ddp.load_state_dict(checkpoint['model'])
         unexpected_keys = [k for k in unexpected_keys if not (k.endswith('total_params') or k.endswith('total_ops'))]
         if len(missing_keys) > 0:
             print('Missing Keys: {}'.format(missing_keys))
         if len(unexpected_keys) > 0:
             print('Unexpected Keys: {}'.format(unexpected_keys))
-        if not args.eval and 'optimizer' in checkpoint and 'lr_scheduler' in checkpoint and 'epoch' in checkpoint:
+        if not args.viz and not args.eval and 'optimizer' in checkpoint and 'lr_scheduler' in checkpoint and 'epoch' in checkpoint:
             import copy
             p_groups = copy.deepcopy(optimizer.param_groups)
             optimizer.load_state_dict(checkpoint['optimizer'])
@@ -289,7 +291,7 @@ def main(args):
             lr_scheduler.step(lr_scheduler.last_epoch)
             args.start_epoch = checkpoint['epoch'] + 1
         # check the resumed model
-        if (not args.eval and not args.viz and args.dataset in ['coco', 'voc']):
+        if (not args.eval and not args.viz and args.dataset in ['lol', 'coco', 'voc']):
             test_stats, coco_evaluator = evaluate(
                 model, criterion, postprocessors, data_loader_val, base_ds, device, args.output_dir
             )
@@ -302,7 +304,10 @@ def main(args):
         return
 
     if args.viz:
-        viz(model, criterion, postprocessors, data_loader_val, base_ds, device, args.output_dir)
+        if args.viz_only:
+            viz_only(model, criterion, postprocessors, data_loader_val, base_ds, device, args.output_dir)
+        else:
+            viz(model, criterion, postprocessors, data_loader_val, base_ds, device, args.output_dir)
         return
 
 
@@ -327,7 +332,7 @@ def main(args):
                     'epoch': epoch,
                     'args': args,
                 }, checkpoint_path)
-        if args.dataset in ['coco', 'voc'] and epoch % args.eval_every == 0:
+        if args.dataset in ['coco', 'voc', 'lol'] and epoch % args.eval_every == 0:
             test_stats, coco_evaluator = evaluate(
                 model, criterion, postprocessors, data_loader_val, base_ds, device, args.output_dir
             )
@@ -360,7 +365,13 @@ def main(args):
 
 
 def get_datasets(args):
-    if args.dataset == 'coco':
+    if args.dataset =='lol':
+        dataset_train = build_dataset(image_set='train', args=args)
+        if args.viz_only:
+            dataset_val = build_dataset(image_set='viz', args=args)
+        else:
+            dataset_val = build_dataset(image_set='val', args=args)
+    elif args.dataset == 'coco':
         dataset_train = build_dataset(image_set='train', args=args)
         dataset_val = build_dataset(image_set='val', args=args)
     elif args.dataset == 'coco_pretrain':
@@ -387,6 +398,8 @@ def set_dataset_path(args):
     args.imagenet_path = os.path.join(args.data_root, 'ilsvrc')
     args.imagenet100_path = os.path.join(args.data_root, 'ilsvrc100')
     args.voc_path = os.path.join(args.data_root, 'pascal')
+    # CUSTOM
+    args.lol_path = os.path.join(args.data_root, 'lol')
 
 
 if __name__ == '__main__':

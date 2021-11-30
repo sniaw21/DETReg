@@ -196,7 +196,7 @@ def evaluate(model, criterion, postprocessors, data_loader, base_ds, device, out
     return stats, coco_evaluator
 
 @torch.no_grad()
-def viz(model, criterion, postprocessors, data_loader, base_ds, device, output_dir):
+def viz_only(model, criterion, postprocessors, data_loader, base_ds, device, output_dir):
     import numpy as np
     os.makedirs(output_dir, exist_ok=True)
     model.eval()
@@ -207,14 +207,50 @@ def viz(model, criterion, postprocessors, data_loader, base_ds, device, output_d
 
     for samples, targets in data_loader:
         samples = samples.to(device)
+        top_k = 20 # hard-code
+
+        outputs = model(samples)
+        # indices = outputs['pred_logits'][0].softmax(-1)[..., 1].sort(descending=True)[1][:top_k]
+        indices = outputs['pred_logits'][0].softmax(-1)[..., -1].sort(descending=False)[1][:top_k]
+        predictied_boxes = torch.stack([outputs['pred_boxes'][0][i] for i in indices]).unsqueeze(0)
+        logits = torch.stack([outputs['pred_logits'][0][i] for i in indices]).unsqueeze(0)
+
+        img = samples.tensors[0].cpu().permute(1,2,0).numpy()
+        img = img * np.array([0.229, 0.224, 0.225]) + np.array([0.485, 0.456, 0.406])
+        img = (img * 255)
+        img = img.astype('uint8')
+        h, w = img.shape[:-1]
+
+        fig, ax = plt.subplots(dpi=200)
+
+        # Pred results
+        plot_prediction(samples.tensors[0:1], predictied_boxes, logits, ax)
+
+        ax.set_axis_off()
+        plt.subplots_adjust(top=1, bottom=0, right=1, left=0, hspace=0, wspace=0)
+        plt.margins(0, 0)
+        plt.savefig(os.path.join(output_dir, targets[0]["image_path"]))
+        plt.close()
+
+@torch.no_grad()
+def viz(model, criterion, postprocessors, data_loader, base_ds, device, output_dir):
+    import numpy as np
+    os.makedirs(output_dir, exist_ok=True)
+    model.eval()
+    criterion.eval()
+
+    metric_logger = utils.MetricLogger(delimiter="  ")
+    metric_logger.add_meter('class_error', utils.SmoothedValue(window_size=1, fmt='{value:.2f}'))
+    for samples, targets in data_loader:
+        samples = samples.to(device)
         targets = [{k: v.to(device) for k, v in t.items()} for t in targets]
         top_k = len(targets[0]['boxes'])
 
         outputs = model(samples)
-        indices = outputs['pred_logits'][0].softmax(-1)[..., 1].sort(descending=True)[1][:top_k]
+        indices = outputs['pred_logits'][0].softmax(-1)[..., -1].sort(descending=False)[1][:top_k]
         predictied_boxes = torch.stack([outputs['pred_boxes'][0][i] for i in indices]).unsqueeze(0)
         logits = torch.stack([outputs['pred_logits'][0][i] for i in indices]).unsqueeze(0)
-        fig, ax = plt.subplots(1, 3, figsize=(10,3), dpi=200)
+        fig, ax = plt.subplots(1, 2, figsize=(10,3), dpi=200)
 
         img = samples.tensors[0].cpu().permute(1,2,0).numpy()
         img = img * np.array([0.229, 0.224, 0.225]) + np.array([0.485, 0.456, 0.406])
@@ -224,23 +260,24 @@ def viz(model, criterion, postprocessors, data_loader, base_ds, device, output_d
 
 
         # SS results
-        boxes_ss = get_ss_res(img, h, w, top_k)
-        plot_prediction(samples.tensors[0:1], boxes_ss, torch.zeros(1, boxes_ss.shape[1], 4).to(logits), ax[0], plot_prob=False)
-        ax[0].set_title('Selective Search')
+        # boxes_ss = get_ss_res(img, h, w, top_k)
+        # plot_prediction(samples.tensors[0:1], boxes_ss, torch.zeros(1, boxes_ss.shape[1], 4).to(logits), ax[0], plot_prob=False)
+        # ax[0].set_title('Selective Search')
 
         # Pred results
-        plot_prediction(samples.tensors[0:1], predictied_boxes, logits, ax[1], plot_prob=False)
-        ax[1].set_title('Prediction (Ours)')
+        plot_prediction(samples.tensors[0:1], predictied_boxes, logits, ax[0], plot_prob=True)
+        ax[0].set_title('Prediction (Ours)')
 
         # GT Results
-        plot_prediction(samples.tensors[0:1], targets[0]['boxes'].unsqueeze(0), torch.zeros(1, targets[0]['boxes'].shape[0], 4).to(logits), ax[2], plot_prob=False)
-        ax[2].set_title('GT')
+        plot_prediction(samples.tensors[0:1], targets[0]['boxes'].unsqueeze(0), torch.zeros(1, targets[0]['boxes'].shape[0], 4).to(logits), ax[1], plot_prob=False)
+        ax[1].set_title('GT')
 
-        for i in range(3):
+        for i in range(2):
             ax[i].set_aspect('equal')
             ax[i].set_axis_off()
 
         plt.savefig(os.path.join(output_dir, f'img_{int(targets[0]["image_id"][0])}.jpg'))
+        plt.close()
 
 
 def get_ss_res(img, h, w, top_k):
